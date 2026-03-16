@@ -7,25 +7,28 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiohttp import web
 import yt_dlp
 
-# --- SOZLAMALAR ---
+# --- SOZLAMALAR (O'zingiznikini qo'ying) ---
 API_TOKEN = '8763063838:AAG4xA6wuEP9uL1jAs7LDoRXV2byIarol-s'
-# Ikkita kanalingizni @ nomi bilan yozing
-CHANNELS = ["@hozirchalikka", "@yaxshilikkada"] 
+CHANNELS = ["@yaxshilikkada", "@hozirchalikka"] # 2 ta kanal manzili
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
+logging.basicConfig(level=logging.INFO)
 
-# --- WEB SERVER (Render o'chib qolmasligi uchun) ---
-async def handle(request): return web.Response(text="Bot ishlayapti!")
+# --- WEB SERVER (RENDER UCHUN) ---
+async def handle(request):
+    return web.Response(text="Bot is running!")
+
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/", handle)
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.environ.get("PORT", 10000))
-    await web.TCPSite(runner, "0.0.0.0", port).start()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
 
-# --- MAJBURIY OBUNANI TEKSHIRISH ---
+# --- OBUNANI TEKSHIRISH ---
 async def check_subscription(user_id):
     for channel in CHANNELS:
         try:
@@ -33,27 +36,25 @@ async def check_subscription(user_id):
             if member.status in ["left", "kicked"]:
                 return False
         except Exception:
-            continue # Agar bot kanalda admin bo'lmasa yoki xato bo'lsa
+            continue
     return True
 
 # --- BOT HANDLERLARI ---
 @dp.message(Command("start"))
-async def start_cmd(message: types.Message):
-    await message.answer(f"👋 Salom {message.from_user.first_name}!\nLink yuboring, men uni MP3 yoki Video qilib yuklab beraman.")
+async def start_command(message: types.Message):
+    await message.answer(f"👋 Salom {message.from_user.first_name}!\n\nVideo yoki MP3 yuklash uchun link yuboring.")
 
 @dp.message(F.text.contains("http"))
-async def link_received(message: types.Message):
-    # Obunani tekshirish
+async def handle_link(message: types.Message):
+    # 1. Obunani tekshirish
     if not await check_subscription(message.from_user.id):
         builder = InlineKeyboardBuilder()
         for ch in CHANNELS:
-            builder.row(types.InlineKeyboardButton(text=f"Obuna bo'lish", url=f"https://t.me/{ch[1:]}"))
+            builder.row(types.InlineKeyboardButton(text="Obuna bo'lish", url=f"https://t.me/{ch[1:]}"))
         builder.row(types.InlineKeyboardButton(text="✅ Tekshirish", callback_data="check_sub"))
-        
-        return await message.answer("❌ Botdan foydalanish uchun quyidagi kanallarga a'zo bo'ling:", 
-                                    reply_markup=builder.as_markup())
+        return await message.answer("❌ Botdan foydalanish uchun kanallarga a'zo bo'ling:", reply_markup=builder.as_markup())
 
-    # Format tanlash tugmalari
+    # 2. Tanlash tugmalarini chiqarish
     url = message.text
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -70,13 +71,14 @@ async def check_callback(call: types.CallbackQuery):
         await call.answer("Hali hamma kanallarga a'zo bo'lmadingiz! ❌", show_alert=True)
 
 @dp.callback_query(F.data.startswith("mp4|") | F.data.startswith("mp3|"))
-async def download_media(call: types.CallbackQuery):
+async def download_process(call: types.CallbackQuery):
     format_type, url = call.data.split("|")
-    await call.message.edit_text("⏳ Yuklash boshlandi, biroz kuting...")
+    await call.message.edit_text("⏳ Yuklanmoqda, kuting...")
 
-    if not os.path.exists('downloads'): os.makedirs('downloads')
+    if not os.path.exists('downloads'):
+        os.makedirs('downloads')
 
-    # MP3 yoki MP4 uchun yt-dlp sozlamalari
+    # yt-dlp sozlamalari
     ydl_opts = {
         'outtmpl': 'downloads/%(title)s.%(ext)s',
         'noplaylist': True,
@@ -96,18 +98,21 @@ async def download_media(call: types.CallbackQuery):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             file_path = ydl.prepare_filename(info)
-            if format_type == "mp3": file_path = file_path.rsplit('.', 1)[0] + ".mp3"
+            if format_type == "mp3":
+                file_path = file_path.rsplit('.', 1)[0] + ".mp3"
 
             input_file = types.FSInputFile(file_path)
             if format_type == "mp3":
-                await call.message.answer_audio(input_file, caption="🎵 @SizningBot_nomi")
+                await call.message.answer_audio(input_file, caption="🎵 @SizningKanal")
             else:
-                await call.message.answer_video(input_file, caption="🎬 @SizningBot_nomi")
+                await call.message.answer_video(input_file, caption="🎬 @SizningKanal")
             
-            os.remove(file_path)
+            if os.path.exists(file_path):
+                os.remove(file_path)
             await call.message.delete()
+            
     except Exception as e:
-        await call.message.answer(f"Xatolik yuz berdi: {str(e)}")
+        await call.message.answer(f"Xatolik: Link noto'g'ri yoki fayl juda katta.")
 
 async def main():
     asyncio.create_task(start_web_server())
