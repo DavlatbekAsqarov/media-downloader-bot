@@ -5,7 +5,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiohttp import web
 import yt_dlp
 
-# --- KONFIGURATSIYA ---
+# --- КОНФИГУРАЦИЯ ---
 API_TOKEN = '8763063838:AAG4xA6wuEP9uL1jAs7LDoRXV2byIarol-s'
 CHANNELS = ['@hozirchhgfalikka', '@yaxshilikkada'] 
 DOWNLOAD_DIR = 'downloads'
@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# Linklarni vaqtincha saqlash (Bad Request xatosini oldini oladi)
+# Временное хранилище ссылок для обхода лимита кнопок (Bad Request)
 url_temp = {}
 
 async def check_sub(user_id):
@@ -30,12 +30,12 @@ async def check_sub(user_id):
 
 @dp.message(Command("start"))
 async def start(m: types.Message):
-    await m.answer("Salom! Video yoki MP3 linkini yuboring (720p HD).")
+    await m.answer(f"Привет {m.from_user.first_name}! Отправьте ссылку на видео (720p HD).")
 
 @dp.message(F.text.startswith("http"))
 async def handle_url(m: types.Message):
     if not await check_sub(m.from_user.id):
-        return await m.answer("Avval kanallarga obuna bo'ling.")
+        return await m.answer("Для использования бота подпишитесь на каналы.")
     
     url = m.text
     u_id = str(hash(url)) 
@@ -46,15 +46,15 @@ async def handle_url(m: types.Message):
         types.InlineKeyboardButton(text="🎬 Video (720p)", callback_data=f"v|{u_id}"),
         types.InlineKeyboardButton(text="🎵 MP3", callback_data=f"a|{u_id}")
     )
-    await m.answer("Formatni tanlang (Max 100MB):", reply_markup=kb.as_markup())
+    await m.answer("Выберите формат (Макс 100MB):", reply_markup=kb.as_markup())
 
 @dp.callback_query(F.data.startswith(("v|", "a|")))
 async def dl(call: types.CallbackQuery):
     mode, u_id = call.data.split("|")
     url = url_temp.get(u_id)
-    if not url: return await call.answer("Xato! Linkni qayta yuboring.")
+    if not url: return await call.answer("Ошибка! Отправьте ссылку заново.")
     
-    msg = await call.message.edit_text("⏳ Yuklanmoqda...")
+    msg = await call.message.edit_text("⏳ Загрузка началась...")
     opts = {
         'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
         'max_filesize': 100 * 1024 * 1024,
@@ -75,21 +75,22 @@ async def dl(call: types.CallbackQuery):
             await msg.delete()
     except Exception as e:
         logging.error(e)
-        await msg.edit_text("❌ Xato! Fayl juda katta yoki FFmpeg yo'q.")
+        await msg.edit_text("❌ Ошибка! Файл слишком большой или на сервере нет FFmpeg.")
         if path and os.path.exists(path): os.remove(path)
 
-# --- WEB SERVER (AttributeError tuzatildi) ---
+# --- WEB SERVER (Исправленный синтаксис) ---
 async def handle(request):
     return web.Response(text="Bot is online")
 
 async def main():
     app = web.Application()
-    app.router.add_get("/", handle) # Mana shu joyi to'g'irlandi
+    app.router.add_get("/", handle)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", 10000)
     await site.start()
     
+    # Удаление вебхука помогает избежать ошибки Conflict
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
