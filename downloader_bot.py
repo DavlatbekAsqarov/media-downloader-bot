@@ -7,14 +7,15 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiohttp import web
 import yt_dlp
 
-# --- SOZLAMALAR ---
 API_TOKEN = '8763063838:AAG4xA6wuEP9uL1jAs7LDoRXV2byIarol-s'
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
-# --- WEB SERVER ---
+# Linklarni vaqtinchalik saqlash uchun savatcha
+user_links = {}
+
 async def handle(request): return web.Response(text="Bot is running!")
 async def start_web_server():
     app = web.Application(); app.router.add_get("/", handle)
@@ -22,24 +23,30 @@ async def start_web_server():
     port = int(os.environ.get("PORT", 10000))
     await web.TCPSite(runner, "0.0.0.0", port).start()
 
-# --- BOT FUNKSIYALARI ---
 @dp.message(Command("start"))
 async def start(message: types.Message):
-    await message.answer(f"👋 Salom {message.from_user.first_name}!\nLink yuboring, Video yoki MP3 qilib yuklab beraman.")
+    await message.answer(f"👋 Salom {message.from_user.first_name}!\nLink yuboring, Video yoki MP3 qilib beraman.")
 
 @dp.message(F.text.contains("http"))
 async def handle_link(message: types.Message):
     url = message.text
+    # Linkni foydalanuvchi IDsi bilan saqlab qo'yamiz (tugma buzilmasligi uchun)
+    user_links[message.from_user.id] = url
+    
     builder = InlineKeyboardBuilder()
     builder.row(
-        types.InlineKeyboardButton(text="🎬 Video (MP4)", callback_data=f"mp4|{url}"),
-        types.InlineKeyboardButton(text="🎵 Musiqa (MP3)", callback_data=f"mp3|{url}")
+        types.InlineKeyboardButton(text="🎬 Video (MP4)", callback_data="get_mp4"),
+        types.InlineKeyboardButton(text="🎵 Musiqa (MP3)", callback_data="get_mp3")
     )
     await message.answer("Qaysi formatda yuklaymiz? 👇", reply_markup=builder.as_markup())
 
-@dp.callback_query(F.data.startswith("mp4|") | F.data.startswith("mp3|"))
+@dp.callback_query(F.data.in_(["get_mp4", "get_mp3"]))
 async def download_process(call: types.CallbackQuery):
-    format_type, url = call.data.split("|")
+    url = user_links.get(call.from_user.id)
+    if not url:
+        return await call.answer("❌ Link topilmadi, qaytadan yuboring.", show_alert=True)
+
+    format_type = "mp3" if call.data == "get_mp3" else "mp4"
     status_msg = await call.message.edit_text("⏳ Yuklanmoqda...")
 
     if not os.path.exists('downloads'): os.makedirs('downloads')
@@ -62,8 +69,10 @@ async def download_process(call: types.CallbackQuery):
             
             if os.path.exists(path): os.remove(path)
             await status_msg.delete()
-    except Exception:
-        await call.message.answer("❌ Xatolik! Link noto'g'ri yoki fayl juda katta.")
+            del user_links[call.from_user.id] # Tozalash
+    except Exception as e:
+        logging.error(e)
+        await call.message.answer("❌ Xatolik! Link yoki serverda muammo.")
 
 async def main():
     asyncio.create_task(start_web_server())
