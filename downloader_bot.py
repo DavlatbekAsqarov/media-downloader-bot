@@ -8,7 +8,7 @@ import yt_dlp
 
 # --- SOZLAMALAR ---
 API_TOKEN = '8763063838:AAG4xA6wuEP9uL1jAs7LDoRXV2byIarol-s'
-CHANNELS = ['@hozirchhgfalikka', '@yaxshilikkada'] 
+CHANNELS = ['@hozirchalikka', '@yaxshilikkada'] 
 INSTAGRAM_URL = "https://www.instagram.com/samarkand070102?igsh=NzVuMGhmcXF2ZnFh"
 DOWNLOAD_DIR = 'downloads'
 
