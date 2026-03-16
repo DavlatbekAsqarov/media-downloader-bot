@@ -1,65 +1,82 @@
-import asyncio, os, uuid
+import asyncio
+import os
+import logging
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from yt_dlp import YoutubeDL
+from aiohttp import web
+import yt_dlp
 
-# --- SOZLAMALAR ---
-TOKEN = "8763063838:AAG4xA6wuEP9uL1jAs7LDoRXV2byIarol-s"
-CHANNELS = ["@hozirchalikka", "@yaxshilikkada"] 
-bot = Bot(token=TOKEN)
+# Loglarni sozlash
+logging.basicConfig(level=logging.INFO)
+
+# --- BOT SOZLAMALARI ---
+API_TOKEN = '8763063838:AAG4xA6wuEP9uL1jAs7LDoRXV2byIarol-s'
+bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# Obunani tekshirish
-async def check_sub(user_id):
-    for ch in CHANNELS:
-        try:
-            m = await bot.get_chat_member(chat_id=ch, user_id=user_id)
-            if m.status in ["left", "kicked"]: return False
-        except: continue
-    return True
+# --- WEB SERVER (RENDER UCHUN) ---
+async def handle(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"Web server {port}-portda ishga tushdi.")
+
+# --- BOT FUNKSIYALARI ---
 
 @dp.message(Command("start"))
-async def start(m: types.Message):
-    await m.answer("🚀 **Bot tayyor!** Shunchaki link yuboring (YT, Insta, FB, X, TikTok).")
+async def start_cmd(message: types.Message):
+    await message.answer("Salom! Video yoki audio yuklash uchun link yuboring.")
 
-# LINK KELGANDA DARROV YUKLASH
 @dp.message(F.text.contains("http"))
-async def handle_link(m: types.Message):
-    if not await check_sub(m.from_user.id):
-        return await m.answer("⚠️ Bot ishlashi uchun @hozirchalikka va @yaxshilikkada kanallariga a'zo bo'ling!")
+async def download_media(message: types.Message):
+    url = message.text
+    msg = await message.answer("Media qayta ishlanmoqda, kuting...")
 
-    wait_msg = await m.answer("⏳ Media tahlil qilinmoqda, kuting...")
-    link = m.text.strip()
-    fid = str(uuid.uuid4())
-    
-    opts = {
-        'outtmpl': f"{fid}.%(ext)s",
+    # yt-dlp sozlamalari (Ham video, ham audio uchun)
+    ydl_opts = {
         'format': 'best',
-        'nocheckcertificate': True,
-        'add_header': ['User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)'],
-        'quiet': True
+        'outtmpl': 'downloads/%(title)s.%(ext)s',
+        'noplaylist': True,
     }
 
     try:
-        with YoutubeDL(opts) as ydl:
-            await wait_msg.edit_text("🚀 Yuklash boshlandi...")
-            info = ydl.extract_info(link, download=True)
-            fname = ydl.prepare_filename(info)
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            file_path = ydl.prepare_filename(info)
+            
+            # Faylni yuborish
+            input_file = types.FSInputFile(file_path)
+            if info.get('ext') == 'mp3' or 'audio' in info.get('format', ''):
+                await message.answer_audio(input_file, caption=info.get('title'))
+            else:
+                await message.answer_video(input_file, caption=info.get('title'))
+            
+            # Faylni serverdan o'chirish (joy band qilmasligi uchun)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        
+        await msg.delete()
 
-        if os.path.exists(fname):
-            video = types.FSInputFile(fname)
-            await m.answer_video(video, caption="✅ **Tayyor!**\n\n🤖 @MediaSaverBot")
-            await wait_msg.delete()
-            os.remove(fname)
-        else:
-            await wait_msg.edit_text("❌ Fayl yuklanmadi.")
     except Exception as e:
-        print(f"TERMINALDA XATO: {e}")
-        await wait_msg.edit_text("⚠️ Xatolik yuz berdi. Link noto'g'ri yoki video yopiq.")
+        await msg.edit_text(f"Xatolik yuz berdi: {str(e)}")
 
+# --- ASOSIY ISHGA TUSHIRISH ---
 async def main():
-    print("Bot ishga tushdi... 🔥")
+    # 1. Web serverni orqa fonda yurgizish
+    asyncio.create_task(start_web_server())
+    
+    # 2. Botni yurgizish
+    print("Bot Renderda ishga tushmoqda...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
+    if not os.path.exists('downloads'):
+        os.makedirs('downloads')
     asyncio.run(main())
