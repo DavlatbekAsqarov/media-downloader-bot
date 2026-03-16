@@ -4,127 +4,119 @@ import logging
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.exceptions import TelegramBadRequest
 from aiohttp import web
 import yt_dlp
 
 # --- KONFIGURATSIYA ---
 API_TOKEN = '8763063838:AAG4xA6wuEP9uL1jAs7LDoRXV2byIarol-s'
-DOWNLOAD_DIR = 'downloads'
+# Kanallaringiz ID sini yoki usernamesini yozing (masalan: '@kanal_yoki_id')
+CHANNELS = ['@hozirchalikka', '@yaxshilikkada'] 
+INSTAGRAM_URL = "https://www.instagram.com/samarkand070102?igsh=NzVuMGhmcXF2ZnFh"
 
-# Papka mavjudligini tekshirish
-if not os.path.exists(DOWNLOAD_DIR):
-    os.makedirs(DOWNLOAD_DIR)
+DOWNLOAD_DIR = 'downloads'
+if not os.path.exists(DOWNLOAD_DIR): os.makedirs(DOWNLOAD_DIR)
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# Foydalanuvchi linklarini saqlash
-user_links = {}
+# --- OBUNANI TEKSHIRISH FUNKSIYASI ---
+async def check_subscription(user_id):
+    for channel in CHANNELS:
+        try:
+            member = await bot.get_chat_member(chat_id=channel, user_id=user_id)
+            if member.status in ["left", "kicked"]:
+                return False
+        except Exception:
+            # Agar bot kanal admini bo'lmasa yoki kanal topilmasa
+            logging.error(f"Xatolik: {channel} tekshirib bo'lmadi")
+            return False
+    return True
 
-# --- WEB SERVER (Render uchun) ---
-async def handle(request):
-    return web.Response(text="Bot is running!")
+def get_sub_keyboard():
+    builder = InlineKeyboardBuilder()
+    for i, channel in enumerate(CHANNELS, 1):
+        builder.row(types.InlineKeyboardButton(text=f"📢 {i}-kanalga obuna bo'lish", url=f"https://t.me/{channel.replace('@', '')}"))
+    
+    builder.row(types.InlineKeyboardButton(text="📸 Instagramga obuna bo'lish", url=INSTAGRAM_URL))
+    builder.row(types.InlineKeyboardButton(text="✅ Obunani tekshirish", callback_data="check_sub"))
+    return builder.as_markup()
 
+# --- WEB SERVER ---
+async def handle(request): return web.Response(text="Bot is running!")
 async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", handle)
-    runner = web.AppRunner(app)
-    await runner.setup()
+    app = web.Application(); app.router.add_get("/", handle)
+    runner = web.AppRunner(app); await runner.setup()
     port = int(os.environ.get("PORT", 10000))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    logging.info(f"Web server started on port {port}")
+    await web.TCPSite(runner, "0.0.0.0", port).start()
 
-# --- BOT HANDLERLARI ---
+# --- HANDLERLAR ---
 @dp.message(Command("start"))
 async def start(message: types.Message):
-    await message.answer(f"👋 Salom {message.from_user.first_name}!\nLink yuboring, Video (MP4) yoki Musiqa (MP3) yuklab beraman.")
+    if await check_subscription(message.from_user.id):
+        await message.answer(f"👋 Salom {message.from_user.first_name}!\nLink yuboring, Video yoki MP3 yuklab beraman.")
+    else:
+        await message.answer("❌ Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:", reply_markup=get_sub_keyboard())
+
+@dp.callback_query(F.data == "check_sub")
+async def check_button(call: types.CallbackQuery):
+    if await check_subscription(call.from_user.id):
+        await call.message.delete()
+        await call.message.answer("✅ Rahmat! Endi botdan foydalanishingiz mumkin. Link yuboring.")
+    else:
+        await call.answer("❌ Hali hamma kanallarga obuna bo'lmadingiz!", show_alert=True)
 
 @dp.message(F.text.startswith("http"))
 async def handle_link(message: types.Message):
+    # Har safar link yuborganda tekshirish (ixtiyoriy)
+    if not await check_subscription(message.from_user.id):
+        return await message.answer("❌ Avval obuna bo'ling:", reply_markup=get_sub_keyboard())
+
     url = message.text
-    user_links[message.from_user.id] = url
-    
     builder = InlineKeyboardBuilder()
     builder.row(
-        types.InlineKeyboardButton(text="🎬 Video (MP4)", callback_data="get_mp4"),
-        types.InlineKeyboardButton(text="🎵 Musiqa (MP3)", callback_data="get_mp3")
+        types.InlineKeyboardButton(text="🎬 Video (MP4)", callback_data=f"mp4|{url}"), # Url'ni callback ichiga yashirdik
+        types.InlineKeyboardButton(text="🎵 Musiqa (MP3)", callback_data=f"mp3|{url}")
     )
     await message.answer("Qaysi formatda yuklaymiz? 👇", reply_markup=builder.as_markup())
 
-@dp.callback_query(F.data.in_(["get_mp4", "get_mp3"]))
+@dp.callback_query(F.data.startswith("mp4|") | F.data.startswith("mp3|"))
 async def download_process(call: types.CallbackQuery):
-    url = user_links.get(call.from_user.id)
-    if not url:
-        return await call.answer("❌ Link topilmadi, qaytadan yuboring.", show_alert=True)
+    if not await check_subscription(call.from_user.id):
+        return await call.answer("❌ Obuna bo'lmagansiz!", show_alert=True)
 
-    format_type = "mp3" if call.data == "get_mp3" else "mp4"
+    format_type, url = call.data.split("|")
     status_msg = await call.message.edit_text("⏳ Yuklanmoqda, kuting...")
 
-    # yt-dlp sozlamalari
-    ydl_opts = {
-        'outtmpl': f'{DOWNLOAD_DIR}/%(title)s.%(ext)s',
-        'noplaylist': True,
-        'quiet': True,
-    }
-
+    ydl_opts = {'outtmpl': f'{DOWNLOAD_DIR}/%(title)s.%(ext)s', 'noplaylist': True, 'quiet': True}
     if format_type == "mp3":
-        ydl_opts.update({
-            'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-        })
+        ydl_opts.update({'format': 'bestaudio/best', 'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}]})
     else:
         ydl_opts['format'] = 'best[ext=mp4]/best'
 
     try:
-        # Bloklanib qolmaslik uchun alohida thread'da ishga tushiramiz
         loop = asyncio.get_event_loop()
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=True))
             path = ydl.prepare_filename(info)
-            
-            # MP3 bo'lsa nomini to'g'rilash
-            if format_type == "mp3":
-                path = os.path.splitext(path)[0] + ".mp3"
+            if format_type == "mp3": path = os.path.splitext(path)[0] + ".mp3"
             
             if os.path.exists(path):
                 file_to_send = types.FSInputFile(path)
-                if format_type == "mp3":
-                    await call.message.answer_audio(file_to_send, caption="@media_downloader_bot orqali yuklandi")
-                else:
-                    await call.message.answer_video(file_to_send, caption="@media_downloader_bot orqali yuklandi")
-                
-                # Faylni o'chirish
+                if format_type == "mp3": await call.message.answer_audio(file_to_send)
+                else: await call.message.answer_video(file_to_send)
                 os.remove(path)
             
             await status_msg.delete()
-            user_links.pop(call.from_user.id, None)
-
     except Exception as e:
-        logging.error(f"Xatolik: {e}")
-        await call.message.answer("❌ Xatolik! Link noto'g'ri yoki fayl juda katta.")
-    finally:
-        # Har qanday holatda foydalanuvchi ma'lumotini tozalash
-        user_links.pop(call.from_user.id, None)
+        logging.error(e)
+        await call.message.answer("❌ Xatolik yuz berdi!")
 
-# --- ASOSIY ISHGA TUSHIRISH ---
 async def main():
-    # Eski webhooklarni va pollinglarni tozalash (ConflictError oldini oladi)
     await bot.delete_webhook(drop_pending_updates=True)
-    
-    # Web serverni fonda ishga tushirish
     asyncio.create_task(start_web_server())
-    
-    # Botni ishga tushirish
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logging.info("Bot stopped!")
+    asyncio.run(main())
