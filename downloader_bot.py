@@ -8,80 +8,82 @@ import yt_dlp
 # --- KONFIGURATSIYA ---
 API_TOKEN = '8763063838:AAG4xA6wuEP9uL1jAs7LDoRXV2byIarol-s'
 CHANNELS = ['@hozirchhgfalikka', '@yaxshilikkada'] 
-INSTAGRAM_URL = "https://www.instagram.com/samarkand070102"
 DOWNLOAD_DIR = 'downloads'
-
 if not os.path.exists(DOWNLOAD_DIR): os.makedirs(DOWNLOAD_DIR)
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# Linklarni vaqtincha saqlash uchun lug'at (tugma xatosini oldini olish uchun)
-url_storage = {}
+# Uzun linklarni vaqtincha saqlash (BUTTON_DATA_INVALID xatosini yopadi)
+url_temp = {}
 
-async def check_subscription(user_id):
-    for channel in CHANNELS:
+async def check_sub(user_id):
+    for ch in CHANNELS:
         try:
-            member = await bot.get_chat_member(chat_id=channel, user_id=user_id)
-            if member.status in ["left", "kicked"]: return False
+            m = await bot.get_chat_member(ch, user_id)
+            if m.status in ["left", "kicked"]: return False
         except: return False
     return True
 
+@dp.message(Command("start"))
+async def start(m: types.Message):
+    await m.answer("Salom! Link yuboring, 720p HD formatda yuklab beraman.")
+
 @dp.message(F.text.startswith("http"))
-async def handle_link(message: types.Message):
-    if not await check_subscription(message.from_user.id):
-        return await message.answer("❌ Avval obuna bo'ling!")
-
-    url = message.text
-    # Tugma xatosini oldini olish uchun linkni ID bilan bog'laymiz
-    url_id = str(hash(url)) 
-    url_storage[url_id] = url 
-
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        types.InlineKeyboardButton(text="🎬 Video (720p)", callback_data=f"mp4|{url_id}"),
-        types.InlineKeyboardButton(text="🎵 Musiqa (MP3)", callback_data=f"mp3|{url_id}")
+async def handle_url(m: types.Message):
+    if not await check_sub(m.from_user.id):
+        return await m.answer("Avval kanallarga obuna bo'ling!")
+    
+    url = m.text
+    u_id = str(hash(url)) # Linkni qisqa ID ga aylantiramiz
+    url_temp[u_id] = url
+    
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(text="🎬 Video (720p)", callback_data=f"v|{u_id}"),
+        types.InlineKeyboardButton(text="🎵 MP3", callback_data=f"a|{u_id}")
     )
-    await message.answer("Formatni tanlang (Max 100MB):", reply_markup=builder.as_markup())
+    await m.answer("Formatni tanlang:", reply_markup=kb.as_markup())
 
-@dp.callback_query(F.data.startswith("mp4|") | F.data.startswith("mp3|"))
-async def download_process(call: types.CallbackQuery):
-    format_type, url_id = call.data.split("|")
-    url = url_storage.get(url_id)
+@dp.callback_query(F.data.startswith(("v|", "a|")))
+async def dl(call: types.CallbackQuery):
+    mode, u_id = call.data.split("|")
+    url = url_temp.get(u_id)
+    if not url: return await call.answer("Xatolik! Linkni qayta yuboring.")
     
-    if not url:
-        return await call.answer("❌ Link muddati o'tgan, qayta yuboring.", show_alert=True)
-
-    status_msg = await call.message.edit_text("⏳ Yuklanmoqda...")
-    
-    ydl_opts = {
+    msg = await call.message.edit_text("⏳ Yuklanmoqda...")
+    opts = {
         'outtmpl': f'{DOWNLOAD_DIR}/%(id)s.%(ext)s',
-        'max_filesize': 100 * 1024 * 1024,
-        'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best' if format_type == "mp4" else 'bestaudio/best'
+        'max_filesize': 100 * 1024 * 1024, # 100MB Render uchun limit
+        'format': 'bestvideo[height<=720]+bestaudio/best' if mode == "v" else 'bestaudio/best'
     }
-
+    
+    path = None
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            # Bu yerda probel (indentation) to'g'ri bo'lishi shart!
             info = await asyncio.to_thread(ydl.extract_info, url, download=True)
             path = ydl.prepare_filename(info)
-            if format_type == "mp3":
-                # MP3 konvertatsiya qilish (FFmpeg kerak!)
-                new_path = os.path.splitext(path)[0] + ".mp3"
-                os.rename(path, new_path)
-                path = new_path
-
-            await call.message.answer_document(types.FSInputFile(path))
+            
+            # Faylni yuborish
+            f = types.FSInputFile(path)
+            if mode == "v": await call.message.answer_video(f)
+            else: await call.message.answer_audio(f)
+            
             os.remove(path)
-            await status_msg.delete()
+            await msg.delete()
     except Exception as e:
         logging.error(e)
-        await status_msg.edit_text("❌ Xatolik! Serverda FFmpeg yo'q yoki fayl juda katta.")
+        await msg.edit_text("❌ Xato! Fayl juda katta yoki FFmpeg o'rnatilmagan.")
+        if path and os.path.exists(path): os.remove(path)
 
-# Render uchun web server qismi (O'zgarishsiz qoladi)
-async def handle(request): return web.Response(text="Online")
+# Render uchun web server
+async def handle(r): return web.Response(text="Bot OK")
 async def main():
-    asyncio.create_task(web._run_app(web.Application().add_get("/", handle), port=10000))
+    app = web.Application(); app.router.add_get("/", handle)
+    runner = web.AppRunner(app); await runner.setup()
+    asyncio.create_task(web.TCPSite(runner, "0.0.0.0", 10000).start())
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
