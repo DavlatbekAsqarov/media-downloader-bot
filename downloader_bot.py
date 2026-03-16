@@ -7,9 +7,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiohttp import web
 import yt_dlp
 
-# --- SOZLAMALAR (O'zingiznikini qo'ying) ---
+# --- SOZLAMALAR ---
 API_TOKEN = '8763063838:AAG4xA6wuEP9uL1jAs7LDoRXV2byIarol-s'
-CHANNELS = ["@yaxshilikkada", "@hozirchalikka"] # 2 ta kanal manzili
+CHANNELS = ["@yaxshilikkada", "@hozirchalikka"] 
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
@@ -35,7 +35,8 @@ async def check_subscription(user_id):
             member = await bot.get_chat_member(chat_id=channel, user_id=user_id)
             if member.status in ["left", "kicked"]:
                 return False
-        except Exception:
+        except Exception as e:
+            logging.error(f"Obuna tekshirishda xato: {e}")
             continue
     return True
 
@@ -47,12 +48,13 @@ async def start_command(message: types.Message):
 @dp.message(F.text.contains("http"))
 async def handle_link(message: types.Message):
     # 1. Obunani tekshirish
-    if not await check_subscription(message.from_user.id):
+    is_sub = await check_subscription(message.from_user.id)
+    if not is_sub:
         builder = InlineKeyboardBuilder()
         for ch in CHANNELS:
-            builder.row(types.InlineKeyboardButton(text="Obuna bo'lish", url=f"https://t.me/{ch[1:]}"))
+            builder.row(types.InlineKeyboardButton(text=f"Obuna bo'lish ({ch})", url=f"https://t.me/{ch[1:]}"))
         builder.row(types.InlineKeyboardButton(text="✅ Tekshirish", callback_data="check_sub"))
-        return await message.answer("❌ Botdan foydalanish uchun kanallarga a'zo bo'ling:", reply_markup=builder.as_markup())
+        return await message.answer("❌ Botdan foydalanish uchun quyidagi kanallarga a'zo bo'ling:", reply_markup=builder.as_markup())
 
     # 2. Tanlash tugmalarini chiqarish
     url = message.text
@@ -73,12 +75,11 @@ async def check_callback(call: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("mp4|") | F.data.startswith("mp3|"))
 async def download_process(call: types.CallbackQuery):
     format_type, url = call.data.split("|")
-    await call.message.edit_text("⏳ Yuklanmoqda, kuting...")
+    status_msg = await call.message.edit_text("⏳ Yuklanmoqda, kuting...")
 
     if not os.path.exists('downloads'):
         os.makedirs('downloads')
 
-    # yt-dlp sozlamalari
     ydl_opts = {
         'outtmpl': 'downloads/%(title)s.%(ext)s',
         'noplaylist': True,
@@ -103,16 +104,17 @@ async def download_process(call: types.CallbackQuery):
 
             input_file = types.FSInputFile(file_path)
             if format_type == "mp3":
-                await call.message.answer_audio(input_file, caption="🎵 @SizningKanal")
+                await call.message.answer_audio(input_file, caption="🎵 @yaxshilikkada")
             else:
-                await call.message.answer_video(input_file, caption="🎬 @SizningKanal")
+                await call.message.answer_video(input_file, caption="🎬 @yaxshilikkada")
             
             if os.path.exists(file_path):
                 os.remove(file_path)
-            await call.message.delete()
+            await status_msg.delete()
             
     except Exception as e:
-        await call.message.answer(f"Xatolik: Link noto'g'ri yoki fayl juda katta.")
+        await call.message.answer(f"Xatolik: Linkda muammo yoki fayl juda katta.")
+        logging.error(f"Download error: {e}")
 
 async def main():
     asyncio.create_task(start_web_server())
