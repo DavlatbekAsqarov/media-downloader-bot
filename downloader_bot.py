@@ -27,16 +27,16 @@ async def start_web_server():
     port = int(os.environ.get("PORT", 10000))
     await web.TCPSite(runner, "0.0.0.0", port).start()
 
-# --- PROFILNI CHIROYLI TAHRIRLASH ---
-async def edit_bot_about():
-    """Botning 'About' va 'Description' qismini chiroyli qilish"""
+# --- PROFILNI LIVEGRAM USLUBIDA TAHRIRLASH ---
+async def edit_bot_profile():
+    """Botning 'About' va 'Description' qismini professional ko'rinishga keltirish"""
     try:
-        # 1. About (Bio) - Profil rasm ostidagi qisqa qatlam
+        # 1. 'About' - Profil rasm ostidagi va qidiruvdagi kulrang yozuv (Livegram uslubi)
         await bot.set_my_short_description(
             short_description="1,198,069 monthly users"
         )
         
-        # 2. Description - 'What can this bot do?' bo'limi
+        # 2. 'Description' - Botni birinchi ochganda chiqadigan chiroyli ro'yxat
         description_text = (
             "📱 Instagram (Reels, Story, Post)\n"
             "🎬 YouTube (Shorts va videolar)\n"
@@ -45,9 +45,9 @@ async def edit_bot_about():
             "Shunchaki video linkini yuboring va natijani oling! 🕹"
         )
         await bot.set_my_description(description=description_text)
-        logging.info("Bot About qismi chiroyli tahrirlandi! ✅")
+        logging.info("Profil Livegram uslubida yangilandi! ✅")
     except Exception as e:
-        logging.error(f"Tahrirlashda xato: {e}")
+        logging.error(f"Xatolik: {e}")
 
 # --- OBUNA TEKSHIRISH ---
 async def check_subscription(user_id):
@@ -71,25 +71,23 @@ async def start(message: types.Message):
     for ch in CHANNELS:
         builder.row(types.InlineKeyboardButton(text=f"Telegram: {ch}", url=f"https://t.me/{ch[1:]}"))
     builder.row(types.InlineKeyboardButton(text="Instagram: Obuna bo'lish", url=INSTAGRAM_URL))
-    builder.row(types.InlineKeyboardButton(text="✅ Obunani tasdiqlash", callback_data="re_check"))
+    builder.row(types.InlineKeyboardButton(text="✅ Obunani tasdiqlash", callback_data="check_sub"))
     
-    await message.answer(welcome_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+    await message.answer(welcome_text, reply_markup=builder.as_markup())
 
-@dp.callback_query(F.data == "re_check")
+@dp.callback_query(F.data == "check_sub")
 async def re_check(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    count = insta_clicks.get(user_id, 0)
-    
-    if not await check_subscription(user_id):
+    if not await check_subscription(call.from_user.id):
         await call.answer("❌ Telegram kanallarga hali a'zo bo'lmadingiz!", show_alert=True)
         return
-
+    
+    count = insta_clicks.get(call.from_user.id, 0)
     if count < 2:
-        insta_clicks[user_id] = count + 1
-        await call.answer("⚠️ Avval Instagram sahifamizga obuna bo'ling!", show_alert=True)
+        insta_clicks[call.from_user.id] = count + 1
+        await call.answer("⚠️ Avval Instagram sahifamizga obuna bo'ling! (Qayta bosing)", show_alert=True)
         return
 
-    await call.message.edit_text("Rahmat! Endi link yuborishingiz mumkin. ✅")
+    await call.message.edit_text("Rahmat! Endi link yuboring. ✅")
 
 @dp.message(F.text.contains("http"))
 async def handle_link(message: types.Message):
@@ -99,12 +97,12 @@ async def handle_link(message: types.Message):
     user_links[message.from_user.id] = message.text
     builder = InlineKeyboardBuilder()
     builder.row(
-        types.InlineKeyboardButton(text="🎬 Video (MP4)", callback_data="type_mp4"),
-        types.InlineKeyboardButton(text="🎵 Musiqa (MP3)", callback_data="type_mp3")
+        types.InlineKeyboardButton(text="🎬 Video (MP4)", callback_data="down_mp4"),
+        types.InlineKeyboardButton(text="🎵 Musiqa (MP3)", callback_data="down_mp3")
     )
     await message.answer("Qaysi formatda yuklaymiz? 👇", reply_markup=builder.as_markup())
 
-@dp.callback_query(F.data.startswith("type_"))
+@dp.callback_query(F.data.startswith("down_"))
 async def download_process(call: types.CallbackQuery):
     url = user_links.get(call.from_user.id)
     f_type = call.data.split("_")[1]
@@ -127,7 +125,7 @@ async def download_process(call: types.CallbackQuery):
             if f_type == "mp3": path = path.rsplit('.', 1)[0] + ".mp3"
             
             fayl = types.FSInputFile(path)
-            caption_text = f"✅ @MediaSaver24Bot orqali yuklab olindi\n👥 Foydalanuvchilar: 1,198,069"
+            caption_text = f"✅ @MediaSaver24Bot orqali yuklandi\n👥 1,198,069 monthly users"
             
             if f_type == "mp3": await call.message.answer_audio(fayl, caption=caption_text)
             else: await call.message.answer_video(fayl, caption=caption_text)
@@ -135,12 +133,14 @@ async def download_process(call: types.CallbackQuery):
             if os.path.exists(path): os.remove(path)
             await status_msg.delete()
     except Exception:
-        await call.message.answer("❌ Xatolik! Fayl juda katta yoki link yopiq.")
+        await call.message.answer("❌ Xatolik! Link noto'g'ri yoki fayl juda katta.")
 
 async def main():
+    # Web serverni yuklash
     asyncio.create_task(start_web_server())
-    # Profilni yangilash
-    await edit_bot_about()
+    # PROFILNI YANGILASH (Livegram uslubi)
+    await edit_bot_profile()
+    # Botni ishga tushirish
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
