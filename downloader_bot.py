@@ -27,21 +27,27 @@ async def start_web_server():
     port = int(os.environ.get("PORT", 10000))
     await web.TCPSite(runner, "0.0.0.0", port).start()
 
-# --- PROFILNI SOZLASH (MONTHLY USERS) ---
-async def set_bot_profile():
-    """Botning profil ma'lumotlarini professional ko'rinishga keltirish"""
+# --- PROFILNI CHIROYLI TAHRIRLASH ---
+async def edit_bot_about():
+    """Botning 'About' va 'Description' qismini chiroyli qilish"""
     try:
-        # Bot ismini yangilash
-        await bot.set_my_name(name="Media Saver | 1.1M users")
-        # 'About' qismi (Rasm ostidagi kulrang yozuv)
-        await bot.set_my_short_description(short_description="1,198,069 monthly users")
-        # 'Description' qismi (Startdan oldingi matn)
-        await bot.set_my_description(
-            description="🎬 Instagram, YouTube, TikTok va Threads videolarini yuklovchi №1 bot.\n\n📊 Hozirda 1 milliondan ortiq foydalanuvchi biz bilan!"
+        # 1. About (Bio) - Profil rasm ostidagi qisqa qatlam
+        await bot.set_my_short_description(
+            short_description="1,198,069 monthly users"
         )
-        logging.info("Bot profili yangilandi! ✅")
+        
+        # 2. Description - 'What can this bot do?' bo'limi
+        description_text = (
+            "📱 Instagram (Reels, Story, Post)\n"
+            "🎬 YouTube (Shorts va videolar)\n"
+            "🎵 TikTok (Suv belgisiz / No Watermark)\n"
+            "🔵 Facebook va boshqalar...\n\n"
+            "Shunchaki video linkini yuboring va natijani oling! 🕹"
+        )
+        await bot.set_my_description(description=description_text)
+        logging.info("Bot About qismi chiroyli tahrirlandi! ✅")
     except Exception as e:
-        logging.error(f"Profil yangilashda xato: {e}")
+        logging.error(f"Tahrirlashda xato: {e}")
 
 # --- OBUNA TEKSHIRISH ---
 async def check_subscription(user_id):
@@ -78,13 +84,12 @@ async def re_check(call: types.CallbackQuery):
         await call.answer("❌ Telegram kanallarga hali a'zo bo'lmadingiz!", show_alert=True)
         return
 
-    # Instagramga 2 marta yo'naltirish
     if count < 2:
         insta_clicks[user_id] = count + 1
-        await call.answer("⚠️ Avval Instagram sahifamizga obuna bo'ling! (Qayta bosing)", show_alert=True)
+        await call.answer("⚠️ Avval Instagram sahifamizga obuna bo'ling!", show_alert=True)
         return
 
-    await call.message.edit_text("Rahmat! Endi link yuborishingiz mumkin. ✅\n\n👥 Foydalanuvchilar: 1,198,069")
+    await call.message.edit_text("Rahmat! Endi link yuborishingiz mumkin. ✅")
 
 @dp.message(F.text.contains("http"))
 async def handle_link(message: types.Message):
@@ -102,15 +107,12 @@ async def handle_link(message: types.Message):
 @dp.callback_query(F.data.startswith("type_"))
 async def download_process(call: types.CallbackQuery):
     url = user_links.get(call.from_user.id)
-    if not url: return await call.answer("Link topilmadi.", show_alert=True)
-
     f_type = call.data.split("_")[1]
     status_msg = await call.message.edit_text("⏳ Yuklanmoqda...")
 
     ydl_opts = {
         'outtmpl': 'downloads/%(title)s.%(ext)s',
         'noplaylist': True,
-        'quiet': True,
         'format': 'best[filesize<45M]/best' 
     }
     
@@ -133,11 +135,12 @@ async def download_process(call: types.CallbackQuery):
             if os.path.exists(path): os.remove(path)
             await status_msg.delete()
     except Exception:
-        await call.message.answer("❌ Xatolik! Fayl juda katta (50MB+) yoki link yopiq.")
+        await call.message.answer("❌ Xatolik! Fayl juda katta yoki link yopiq.")
 
 async def main():
     asyncio.create_task(start_web_server())
-    await set_bot_profile()
+    # Profilni yangilash
+    await edit_bot_about()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
